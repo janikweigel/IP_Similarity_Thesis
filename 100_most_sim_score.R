@@ -30,12 +30,14 @@ most_sim10 <- stream_in(textConnection(readLines(file_name, n=10)),verbose=T) # 
 
 ## Lets build a big function
 # Read target file -> RIGHT FORMAT? ADJUST TO str(id_match) below
-target <- read.csv("~/Master Thesis/IP_Similarity_Thesis/data_company/elkamet_clean_full.csv",
+target_tib <- read.csv("~/Master Thesis/IP_Similarity_Thesis/data_company/elkamet_clean_full.csv",
                    # To manipulate the data -> strings needed
                    stringsAsFactors=FALSE) %>% 
   select(`us_pat_no`) %>% 
-  as.character(.) %>% 
-  strsplit(., split = ",")
+  # add "fake" patent to test the function
+  add_row(`us_pat_no`= 10000900) 
+
+target_tib[12,] %in% most_sim1000[1,]
 
 str(target)
 
@@ -85,21 +87,23 @@ mock[which(mock[,6] %in% id_match)
     # Take for a given row all important input
      ,] 
 pryr::object_size(moData) # small target vector
-## ME: ??
-which(colnames(most_sim1000) %in% target_simp)
-most_sim1000[,997:999]
+
+## ME: Extract the right names from the columns
+which(colnames(most_sim1000) %in% target)
+most_sim1000[,2608:2610]
+
 
 ## Let's do itt
 # target for function building (early result)
-target_fnct <- target %>% 
-  add_row(`us_pat_no`= 10000900) %>% 
-  as.data.frame(.) %>% 
-  
+#target_fnct <- target %>% 
+ # add_row(`us_pat_no`= 10000900) %>% 
+  #as.data.frame(.)
  #  unlist(.) %>% 
-  toString(.)
+ # toString(.)
 # mutate(`us_pat_no`= str_replace(`us_pat_no`,"(.+)","X.\\1.")) %>% 
 
-target <- c("X.10000340.",
+target <- c("X.10000000.",
+"X.10000900.",
 "X.8628137.",
 "X.5921663.",
 "X.8768153.",
@@ -112,17 +116,26 @@ target <- c("X.10000340.",
 "X.10315342.",
 "X.8444205.")
 
+# TODO: Does it need a match to work? If yes -> if
+if(which(colnames(df) %in% target) > 1){
+  i <- which(colnames(df) %in% target)
 
+which(most_sim1000[0,seq_len(ncol(most_sim10)) %% 3 == 1] %in% target)
+str(most_sim1000[0,seq_len(ncol(most_sim10)) %% 3 == 1])
 
-?str_replace
+which(as.character(most_sim1000[0,1]) %in% target)
+
+cols[] <- lapply(most_sim1000[0,seq_len(ncol(most_sim1000)) %% 3 == 1], as.string)
+cols[1] %in% target
+
 # adjust fct
 myData <- new.env()
 stream_in(textConnection(readLines(file_name, n=1000)),
           handler = function(df){ 
             # Define index of the df for saving of result -> always +1 than currently                     
             idx <- as.character(length(myData) + 1)
-            # Task: defines the column that matches, and save it + following 2
-            i <- which(colnames(most_sim1000) %in% target)
+            # Task: define COLUMN INDEX that matches, and save it & following 2
+            i <- which(colnames(df) %in% target)
             myData[[idx]] <- df[,i:(i+2)]
           },
           # Iteration size n = total rows (ca. 16M) / pagesize = Anzahl Lists
@@ -130,16 +143,21 @@ stream_in(textConnection(readLines(file_name, n=1000)),
 
 pryr::object_size(myData)
 
-
-
-## Other example: merge the whole DF 
+isTRUE(which(colnames(most_sim1000) %in% target) > 1)
+?isTRUE
+rm(myData)
+#### Other example: merge the whole DF ####
 new_df <- new.env()
 stream_in(file("C:/Users/janik/Downloads/patent_data_all/MOCK_DATA.json"), 
           handler = function(df){ 
   new_df <- rbind.data.frame(new_df,dplyr::filter(df$data[,1]<20))
   }, pagesize = 500)
 
-?cat
+####
+# Ok, fuck it... let's assume I get the 100 scores, what now?
+
+fuckit <- 
+
 #### Own Idea -- Loop with 1000: If number in the column name, take the whole column and save in empty DF ####
 
 ### TBD: 
