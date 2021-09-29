@@ -1,6 +1,6 @@
 library(dplyr)
 library(readr)
-library(jsonlite)
+library(jsonlite) # to stream_in large JSON file
 library(pryr)
 library(stringr)
 
@@ -93,19 +93,13 @@ which(colnames(most_sim1000) %in% target)
 most_sim1000[,2608:2610]
 
 
-## Let's do itt
-# target for function building (early result)
-#target_fnct <- target %>% 
- # add_row(`us_pat_no`= 10000900) %>% 
-  #as.data.frame(.)
- #  unlist(.) %>% 
- # toString(.)
-# mutate(`us_pat_no`= str_replace(`us_pat_no`,"(.+)","X.\\1.")) %>% 
-
-target <- c("X.10000000.",
-"X.10000900.",
+## Let's do it
+# Define patent portfolio ("targets")
+target_old <- c(
+"X.10000000.", # Test I
+"X.10000900.", # Test II
 "X.8628137.",
-"X.5921663.",
+"X.5921663.", # Removed
 "X.8768153.",
 "X.6769700.",
 "X.9186984.",
@@ -116,21 +110,31 @@ target <- c("X.10000000.",
 "X.10315342.",
 "X.8444205.")
 
-# TODO: Does it need a match to work? If yes -> if
-if(which(colnames(df) %in% target) > 1){
-  i <- which(colnames(df) %in% target)
+target     <- c("X.10000000.", # Test I
+                "X.10215337.",
+                "X.10300636.", # added
+                "X.10315342.", 
+                "X.10392507.", # added
+                "X.10414259.",                
+                "X.6769700.",
+                "X.8444205.",                 
+                "X.8628137.",
+                "X.8768153.",
+                "X.8991893.",  # added 
+                "X.9073421.",
+                "X.9186984.",
+                "X.9399393.",  # added
+                "X.9994094."
+)
 
-which(most_sim1000[0,seq_len(ncol(most_sim10)) %% 3 == 1] %in% target)
+
+which(most_sim1000[0,seq_len(ncol(most_sim1000)) %% 3 == 1] %in% target)
 str(most_sim1000[0,seq_len(ncol(most_sim10)) %% 3 == 1])
-
 which(as.character(most_sim1000[0,1]) %in% target)
 
-cols[] <- lapply(most_sim1000[0,seq_len(ncol(most_sim1000)) %% 3 == 1], as.string)
-cols[1] %in% target
-
-# adjust fct
+## Adjusted fct - works in theory, but super slow
 myData <- new.env()
-stream_in(textConnection(readLines(file_name, n=1000)),
+stream_in(textConnection(readLines(file_name, n = 10000)),
           handler = function(df){ 
             # Define index of the df for saving of result -> always +1 than currently                     
             idx <- as.character(length(myData) + 1)
@@ -141,12 +145,80 @@ stream_in(textConnection(readLines(file_name, n=1000)),
           # Iteration size n = total rows (ca. 16M) / pagesize = Anzahl Lists
           pagesize = 500) ## change back to 1000
 
+isTRUE(colnames(most_sim1000) %in% target)
+
+## Improve efficency & make "fake data" for pipeline: read 10k lines (n_max)
+# a) Baseline: 29.53 / b) read_lines: 29.38 sec / c) file(): 30.4sec [131 sec for 43000]
+# d) Baseline, pagesize = 2000: 28.03 BUT ONLY FIRST RESULT -> too close to each other -> set max for 
+# e) Put idx into loop: 26.99 sec <> 28.19 / with 5000: 31.64
+# f) Combined with 1000: 27.94 / with 2500: 27.83 / with 5000: 27.22 
+## Full Runs: 500k with 5000: 1400 sec (23.33min) / 2.5M with 5000: 9860sec (164min)
+
+myData <- new.env()
+system.time({
+  stream_in(textConnection(read_lines(file_name, n_max = 2500000)),
+          handler = function(df){ 
+            # Task: define COLUMN INDEX that matches, and save it & following 2
+            if(!is.null(which(colnames(df) %in% target)) & length(which(colnames(df) %in% target)) > 0){
+              # Define index of the df for saving of result -> always +1 than currently
+              idx <- as.character(length(myData) + 1)
+              i <- which(colnames(df) %in% target)
+              myData[[idx]] <- df[,i:(i+2)] 
+              }
+          },
+          # Iteration size n = total rows (ca. 16M) / pagesize = Anzahl Lists
+          pagesize = 5000,
+          verbose = T) ## change back to 1000
+})
+
 pryr::object_size(myData)
 
-isTRUE(which(colnames(most_sim1000) %in% target) > 1)
-?isTRUE
-rm(myData)
-#### Other example: merge the whole DF ####
+## Take first 500k lines = 5 patents until 10414259 ~ ca. 22min
+# Reshape results into DF
+PatCols <- myData %>% as.list() %>% bind_cols()
+
+# Target format: Wide-to-Long & as DT
+library(data.table)
+PatCols <- PatCols %>% 
+  setDT() %>% 
+  melt.data.table(measure.vars = patterns("^X\\.","^X1[:punct:]?", "^X2[:punct:]?"),
+                  value.name = c("patent_no","similar_no","cosine"),
+                  variable.name = "portfolio_id")
+
+# Filter unique patents for metadata search
+SimPats <- PatCols_Long %>% 
+  select(`similar_no`) %>% 
+  unique()
+
+
+
+            
+# Other tries below
+#### Parallize JSON READ (doens't work) -> " Error in i:(i + 2) : argument of length 0" ####
+library(doParallel)
+# lapply for faster execution
+cols[] <- lapply(most_sim1000[0,seq_len(ncol(most_sim1000)) %% 3 == 1])
+cols[1] %in% target
+
+myData <- new.env()
+system.time({
+  stream_in(textConnection(readLines(file_name, n = 500000)),
+            handler = function(df){ 
+              # Task: define COLUMN INDEX that matches, and save it & following 2
+              if(!is.null(which(colnames(df) %in% target)) & length(which(colnames(df) %in% target)) > 0){
+                # Define index of the df for saving of result -> always +1 than currently
+                fill <- function(df){
+                  idx <- as.character(length(myData) + 1)
+                  i <- which(colnames(df) %in% target)
+                  myData[[idx]] <- df[,i:(i+2)] 
+                }
+                lapply(df,fill)
+              }
+            },
+            # Iteration size n = total rows (ca. 16M) / pagesize = Anzahl Lists
+            pagesize = 500,
+
+#### Read in JSON: Example - merge the whole DF ####
 new_df <- new.env()
 stream_in(file("C:/Users/janik/Downloads/patent_data_all/MOCK_DATA.json"), 
           handler = function(df){ 
@@ -158,7 +230,7 @@ stream_in(file("C:/Users/janik/Downloads/patent_data_all/MOCK_DATA.json"),
 
 fuckit <- 
 
-#### Own Idea -- Loop with 1000: If number in the column name, take the whole column and save in empty DF ####
+#### Read in JSON: Own Idea -- Loop with 1000: If number in the column name, take the whole column and save in empty DF ####
 
 ### TBD: 
 # (!) change numbers for prev. defined variables
