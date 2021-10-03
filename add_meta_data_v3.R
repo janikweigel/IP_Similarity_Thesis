@@ -30,6 +30,7 @@ target     <- c("X.10000000.", # Test I
                 "X.9994094."
 )
 
+#### Start Exploration & Unsuccessful Tried with one-fits-all function ####
 
 # a) Fields == What data is possible to get
 get_endpoints() # [1] "assignees"  [2] "cpc_subsections"
@@ -154,12 +155,12 @@ if (is.na(assignee_organization) == FALSE | is.null(assignee_organization) == FA
   unwrap_cols(groupingVar = assignee_organization, separator = ";;") -> small3[1:5,2:6]
 } else
   unwrap_cols(groupingVar = assignee_first_name, separator = ";;") -> small3[1:5,2:6]
-}
+
+#### Unsucessful former approach END ####
 
 
 
-
-#### Get META information seperately ####
+#### Get META information seperately // Extendable for other categories ####
 
 ## Define empty objects for results
 # Empty list for API results, only Assignee
@@ -171,7 +172,17 @@ asgn_res <- as.data.frame(matrix(ncol=2, nrow=length(sim_pats$similar_no)))
 asgn_res[1] <- sim_pats$similar_no
 colnames(asgn_res) <- c("similar_no","assignee")
 
-## Assignee Only:
+# Empty list for API results, only CPC
+cpc_api <- as.list(rep(NA, length(sim_pats$similar_no)))
+names(cpc_api) <- sim_pats$similar_no
+
+# Emptry matrix for ONLY CPC results
+cpc <- as.data.frame(matrix(ncol=5, nrow=length(sim_pats$similar_no)))
+cpc[1] <- sim_pats$similar_no
+colnames(cpc) <- c("similar_no","no_distinct_cpc_sim","cpc_group_id","cpc_group_title","cpc_subgroup_id")
+
+
+## Assignee Only: Request from API
 for (i in 1:length(sim_pats$similar_no)){
   query <- qry_funs$eq(patent_number = sim_pats$similar_no[i])
   fields <- c("assignee_organization")
@@ -181,47 +192,80 @@ for (i in 1:length(sim_pats$similar_no)){
     all_pages = TRUE)
 }
 
-# Define function to combine double assignees
-double_asgn <- function(i){
-  # Paste both individuals, IF more than 1
-  a <- asgn[[i]]$patents$assignees[[1]]$assignee_organization[1]
-  b <- asgn[[i]]$patents$assignees[[1]]$assignee_organization[2]
-  # Target matrix: [patent index, column index]
-  asgn_res[[i,2]] <- paste(a,b, sep = ";;")
-}
+## Careful of double assignees
+#asgn[[166]]$patents$assignees[[1]]$assignee_organization
 
-# Loop over list of patents - works fast
+# Loop over list of patents (runs fast)
 for (i in 1:length(sim_pats$similar_no)){
   # Test if more than 1 assignee for given patent
   if(length(asgn[[i]]$patents$assignees[[1]]$assignee_organization) > 1){
-    double_asgn
+    # Define function to combine double assignees: Paste both individuals, IF more than 1
+    a <- asgn[[i]]$patents$assignees[[1]]$assignee_organization[1]
+    b <- asgn[[i]]$patents$assignees[[1]]$assignee_organization[2]
+    # Target matrix: [patent index, column index]
+    asgn_res[[i,2]] <- paste(a,b, sep = ";;")
   } else 
     asgn_res[[i,2]] <- asgn[[i]]$patents$assignees[[1]]$assignee_organization
 }
 
-## CPC Only
+## CPC Only: Request from API
 for (i in 1:length(sim_pats$similar_no)){
   query <- qry_funs$eq(patent_number = sim_pats$similar_no[i])
   fields <- c("cpc_group_title","cpc_group_id","cpc_subgroup_id")
-  asgn[i] <- search_pv(
+  cpc_api[i] <- search_pv(
     query = query,
     fields = fields,
     all_pages = TRUE)
 }
 
-## Combine Assignee & CPC
+## Explore: How many CPCs are there?
+#cpc_len <- as.data.frame(matrix(ncol=1, nrow=length(sim_pats$similar_no)))
+#for (i in 1:length(sim_pats$similar_no)){
+#  cpc_len[i,1] <- length(cpc_api[[i]]$patents$cpcs[[1]]$cpc_group_title)
+#}
+#max(cpc_len) # up to 75 sub-group (8-digit) classifications
 
+# Loop over list of patents (somewhat fast)
+for (i in 1:length(sim_pats$similar_no)){
+  cpc_api[[i]]$patents %>% 
+    # turn into DF, each field is a column
+    unnest(cols = cpcs) %>% 
+    #  # add distinct classes indicated // only later at one row=
+    #  mutate(no_distinct_cpc_sim = length(unique(cpc_group_id)),.after = cpc_group_id) %>%   
+    # group by CPC group 
+    group_by(cpc_group_id) %>% 
+    summarize(cpc_group_title = first(cpc_group_title),
+              cpc_subgroup_id = paste(cpc_subgroup_id, collapse = ";;")) %>% 
+    # add distinct classes indicatot
+    mutate(no_distinct_cpc_sim = length(cpc_group_id),.after = cpc_group_id) %>% 
+    # Concenate all CPC classes into one row
+    group_by(no_distinct_cpc_sim) %>%
+    summarize(cpc_group_id    = paste(cpc_group_id, collapse = ";;"),
+              cpc_group_title = paste(cpc_group_title, collapse = ";;"),
+              cpc_subgroup_id = paste(cpc_subgroup_id, collapse = ";;")) -> cpc[i,2:5]
+}
+
+## Combine Assignee & CPC
+similar_meta <- merge(asgn_res, cpc, by = "similar_no")
+
+## check if it's really the same stuff // confirmed by internet check
+#View(cpc_api$'10480924') # one of the few CPC NA's
+#View(asgn$'10480924') # Assignee = CASE WESTERN RESERVE UNIVERSITY
+#View(cpc_api$'10479031') # B29C, B29K
+#View(asgn$'10479031') # Assignee = 2x TyssenKrupp Organizations
 
 #### END META INFORMATION SEPERATELY ####
 
 
-
 # Add to existing Similarity DF with patents
-library(plyr)
-PatCols <- read_csv("~/Master Thesis/IP_Similarity_Thesis/data_company/most_sim_patents_v1.csv",
+patcols <- read_csv("~/Master Thesis/IP_Similarity_Thesis/data_company/most_sim_patents_v1.csv",
                      col_names = T)
 
-comb <- merge(x = PatCols, y = small3, by = "similar_no", all.y = TRUE)
+comb1 <- merge(patcols, similar_meta, by = "similar_no", all.y = TRUE)
+
+write_csv(comb1, "~/Master Thesis/IP_Similarity_Thesis/data_company/portfolio_meta_v1.csv",
+                    col_names = T)
+
 
 comb %>% 
   toString(.$patent_no) %>% 
