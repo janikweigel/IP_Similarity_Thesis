@@ -255,7 +255,7 @@ similar_meta <- merge(asgn_res, cpc, by = "similar_no")
 #View(asgn$'10479031') # Assignee = 2x TyssenKrupp Organizations
 
 #### END META INFORMATION SEPERATELY ####
-
+#### Save progress and move on ####
 
 # Add to existing Similarity DF with patents
 patcols <- read_csv("~/Master Thesis/IP_Similarity_Thesis/data_company/most_sim_patents_v1.csv",
@@ -267,6 +267,46 @@ write_csv(comb1, "~/Master Thesis/IP_Similarity_Thesis/data_company/portfolio_me
                     col_names = T)
 
 
+
+# TODO: Define next step/goal 
+# (i) filter NAs, (ii) sort for unique assignees, (iii) compare to Elkamet
+
+## (i) 
+# Von insgesamt 400 Patenten sind ...
+comb1 %>% 
+  # ... 369 "assigned" und bestehen aus ...
+  filter(!is.na(assignee)) %>% 
+  # ... 287 "unique" Assignee (strings)
+  distinct(assignee) %>% 
+  arrange(assignee) -> asgn_unique
+
+write_csv(asgn_unique, "~/Master Thesis/IP_Similarity_Thesis/data_company/portfolio_unique_assignees_v1.csv",
+          col_names = T)
+
+## (ii)
+# TODO: consolidate duplicated assignee names above
+# Installs and loads harmonizer // R restart needed
+library("devtools", character.only = TRUE)
+# Dependencies
+install.packages("fansi")
+install.packages("stringi")
+install.packages("tibble")
+install_github("stasvlasov/harmonizer")
+library("harmonizer")
+
+
+## (iii)
+elkamet <- read_csv("~/Master Thesis/IP_Similarity_Thesis/data_company/elkamet_clean_cpc.csv",
+                    col_names = T)
+# Problem with load: only 11 patents; 4 missing/1 ueberfluessig
+# elkamet %>% distinct(us_pat_no) %>% count()
+# TODO: replace with updated file
+
+# Compare CPC % match for each
+
+
+
+#### What's this shit? ####
 comb %>% 
   toString(.$patent_no) %>% 
   mutate(patent_no = str_replace(patent_no,".*","10000000"))
@@ -285,6 +325,7 @@ comb2 %>%
   
   
 # Old - save in DF doesn't work
+# TODO: conditional prblem in dplry
 pv_res$data$patents %>% 
   # turn into DF, each field is a column
   unnest(cols = c(assignees, cpcs)) %>% 
@@ -297,7 +338,8 @@ pv_res$data$patents %>%
   unwrap_cols(groupingVar = assignee, separator = ";;") -> sim_pats[,2:6] 
 
 
-
+library(stringr)
+?str_c
 
 rbind
 x <- character(length(sim_pats$similar_no))
