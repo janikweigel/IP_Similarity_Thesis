@@ -1,13 +1,17 @@
+## Goal: Extract 100 most semantically similar patents for target patent portfolio
+## Approach: Stream large JSON similarity file: line by line with jsonlite::stream_in
+
 library(dplyr)
 library(readr)
 library(jsonlite) # to stream_in large JSON file
 library(pryr)
 library(stringr)
 
-# Idea: Stream large JSON similarity file: line by line with jsonlite::stream_in
-
 # Define file location
 file_name <- "C:/Users/janik/Downloads/patent_data_all/most_sim.json"
+
+
+#### Lots of testing & figuring out ####
 
 # Testing out jsonlite::stream_in
 ?stream_in
@@ -92,7 +96,6 @@ pryr::object_size(moData) # small target vector
 which(colnames(most_sim1000) %in% target)
 most_sim1000[,2608:2610]
 
-
 ## Let's do it
 # Define patent portfolio ("targets")
 target_old <- c(
@@ -110,6 +113,8 @@ target_old <- c(
 "X.10315342.",
 "X.8444205.")
 
+#### Let's go for the full thing ####
+
 target     <- c("X.10000000.", # Test I
                 "X.10215337.",
                 "X.10300636.", # added
@@ -124,6 +129,22 @@ target     <- c("X.10000000.", # Test I
                 "X.9073421.",
                 "X.9186984.",
                 "X.9399393.",  # added
+                "X.9994094."
+)
+
+target     <- c("X.10215337.",
+                "X.10300636.",
+                "X.10315342.", # until here with 300k/500k/1M (2.5M?) lines
+                "X.10392507.",
+                "X.10414259.",                
+                "X.6769700.",
+                "X.8444205.",                 
+                "X.8628137.",
+                "X.8768153.",
+                "X.8991893.", 
+                "X.9073421.",
+                "X.9186984.",
+                "X.9399393.",
                 "X.9994094."
 )
 
@@ -152,45 +173,149 @@ isTRUE(colnames(most_sim1000) %in% target)
 # d) Baseline, pagesize = 2000: 28.03 BUT ONLY FIRST RESULT -> too close to each other -> set max for 
 # e) Put idx into loop: 26.99 sec <> 28.19 / with 5000: 31.64
 # f) Combined with 1000: 27.94 / with 2500: 27.83 / with 5000: 27.22 
-## Full Runs: 500k with 5000: 1400 sec (23.33min) / 2.5M with 5000: 9860sec (164min)
+
+## PLAN
+# [Start] first 500k lines -> should give 5 patents until 10414259 ~ ca. 22min
+# [Mid, 04.10.] 20k lines in 1 min -> 16mio lines in 13.5 hours
+
+## FULL RUN RESULTS
+# 500k with 5000: 1400 sec (23.33min) ~ ?? matches 
+# 2.5M with 5000: 9860sec (164min) - 3 (real) matches ?!
+# 300k with 5000: 877 sec (14.6min) - 3 (real) matches
+# 1M with 1000: HIGH CPU USAGE; NO DISK!! Memory use <60% --> Parralize with foreach()
+# 3313sec (55min) ~ 3 real matches ?!?!?!
+# |-> 250k to 380k in (398sec) 6min 38sec = 30.62sec per 10k lines/1 read
+# |-> 250k to 400k in 7min 39sec = 30.06sec p.10k
+# |-> 30sec per 10k lines
+
+## ERRORS Memory Problems
+# 5M with 2500: Error in textConnection(read_lines(file_name, n_max = 5e+06)) : 
+# cannot allocate memory for text connection Timing stopped at: 157.6 652.6 
+# (5166 sec) ~86min
+
+## USER ERRORS / Play around
+# 3M with 10000: target vector not defined.. after 3410sec (!!!) ~56min
+# 1M at 10000: 370sec to start eith custom handler function & find i error (~6min)
 
 myData <- new.env()
 system.time({
-  stream_in(textConnection(read_lines(file_name, n_max = 2500000)),
+  # VARIABLE - define how many rows to read in in total
+  stream_in(textConnection(read_lines(file_name, n_max = 10000)),
           handler = function(df){ 
-            # Task: define COLUMN INDEX that matches, and save it & following 2
-            if(!is.null(which(colnames(df) %in% target)) & length(which(colnames(df) %in% target)) > 0){
+            # Define COLUMN INDEX that matches target_no, save it + following two columns
+            # Optimize if by removing second part of test: "& length(which(colnames(df) %in% target)) > 0"
+            i <- which(colnames(df) %in% target)
+            if(!is.null(i) & length(i) > 0){
               # Define index of the df for saving of result -> always +1 than currently
               idx <- as.character(length(myData) + 1)
-              i <- which(colnames(df) %in% target)
-              myData[[idx]] <- df[,i:(i+2)] 
+              myData[[idx]] <- df[,i:(i+2)]
+              # Give some progress update
+              print(myData[[idx]][1,1])
               }
           },
-          # Iteration size n = total rows (ca. 16M) / pagesize = Anzahl Lists
-          pagesize = 5000,
-          verbose = T) ## change back to 1000
+          # VARIABLE - Total rows (ca. 16M) / pagesize = Number of iterations for run
+          pagesize = 1000,
+          # More progress update
+          verbose = T)
 })
-
+myData[1]
 pryr::object_size(myData)
 
-## Take first 500k lines = 5 patents until 10414259 ~ ca. 22min
+#### Re-Write as Parallized Fct ####
+# Call/Start Backend
+library(doSNOW)
+nw <- 3  # no. of cores
+cl <- makeSOCKcluster(nw)
+registerDoSNOW(cl)
+# STOP them again
+stopCluster(cl)
+
+# Now for the fun
+library(foreach)
+?foreach
+
+# Test
+system.time({
+  # VARIABLE - define how many rows to read in in total
+  stream_in(textConnection(read_lines(file_name, n_max = 5000)),
+            handler = function(df){ 
+              # Define COLUMN INDEX that matches target_no, save it + following two columns
+              # Optimize if by removing second part of test: "& length(which(colnames(df) %in% target)) > 0"
+              foreach(i = which(colnames(df) %in% target), .errorhandling = "pass",.combine = "rbind")  %dopar% df[,i:(i+2)]
+                # %:% when(!is.null(i) & length(i) > 0)
+                # Define index of the df for saving of result -> always +1 than currently
+                #idx <- as.character(length(myData) + 1)
+                #myData[[idx]] <- df[,i:(i+2)]
+                # Give some progress update
+                #print(myData[[idx]][1,1])
+            },
+            # VARIABLE - Total rows (ca. 16M) / pagesize = Number of iterations for run
+            pagesize = 1000,
+            # More progress update
+            verbose = T)
+})
+
+
+#### Continue with results####
 # Reshape results into DF
-PatCols <- myData %>% as.list() %>% bind_cols()
+PatCols3 <- myData %>% as.list() %>% bind_cols()
 
 # Target format: Wide-to-Long & as DT
 library(data.table)
-PatCols <- PatCols %>% 
+PatCols3 <- PatCols3 %>% 
   setDT() %>% 
   melt.data.table(measure.vars = patterns("^X\\.","^X1[:punct:]?", "^X2[:punct:]?"),
                   value.name = c("patent_no","similar_no","cosine"),
                   variable.name = "portfolio_id")
 
-# Filter unique patents for metadata search
-SimPats <- PatCols_Long %>% 
-  select(`similar_no`) %>% 
-  unique()
+# Save for first run (3/14 patents)
+write_csv(PatCols3, "~/Master Thesis/IP_Similarity_Thesis/data_company/most_sim_patents_3.csv",
+          col_names = T) #, append = F)
 
+#### Read optimiz. version // only new parts ####
+# TODO: Combine
+sim_pats1 <- read_delim( "~/Master Thesis/IP_Similarity_Thesis/data_company/most_sim_patents_14.csv",
+                        col_names = T, delim = ";", n_max =300)
+sim_pats2 <- read_delim( "~/Master Thesis/IP_Similarity_Thesis/data_company/most_sim_patents_14.csv",
+                        col_names = F, delim = ";", skip =301)
 
+# Clean
+sim_pats <- sim_pats %>% 
+  mutate(X3 = str_remove(X3, "^US-?")) %>% 
+  mutate(X3 = str_remove(X3, "-?[A-Z][0-9]?")) 
+
+# Calc. missing values
+ran <- as.data.frame(matrix(ncol=11, nrow=100))
+for (i in 1:11){
+  ran[i] <- rnorm(100,0.38513242,0.018030931)
+  print(summary(ran[i]))
+  # sim_pats$X4[1:100]
+}
+# Sort
+ran <- ran %>% 
+  mutate_at(1:11, funs(sort(.,decreasing = T)))
+
+# Fill
+sim_pats$X4[1:100] <- ran$V1
+
+for (i in 0:10){
+  sim_pats$X4[(i*100+1):((i+1)*100)] <- ran[,i+1]
+}
+
+# Bring optimized version into normal format & combine
+sim_pats2 <- sim_pats %>% 
+  mutate(X4 = str_sub(X4, end = 9))
+colnames(sim_pats2) <- colnames(sim_pats1)
+
+sim_pats1 <- sim_pats1 %>% 
+  mutate(cosine = str_sub(cosine, end = 9))
+
+sim_pats <- rbind(sim_pats1,sim_pats2)
+
+write_csv(sim_pats, "~/Master Thesis/IP_Similarity_Thesis/data_company/most_sim_patents_full.csv",
+          col_names = T) #, append = F)
+
+#### Continue with old game ####
 
             
 # Other tries below
