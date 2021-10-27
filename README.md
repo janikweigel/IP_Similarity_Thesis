@@ -22,3 +22,7 @@ automatically and accurately identify relevant market players, enabling company 
 Both measures of patent similarity were shown to be positively correlated with the strategic importance of the identified assignees to the target company.
 
 All R code developed is available for replication, and application on new patent portfolios at: https://github.com/janikweigel/IP_Similarity_Thesis 
+
+**Approach & Framework Design**
+
+![framework_sim_thesis](https://user-images.githubusercontent.com/54854602/138978104-04b3e985-dee2-4b46-8b54-632a4f6b3dec.png)
